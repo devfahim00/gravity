@@ -1,0 +1,39 @@
+name: Build APK
+on:
+  push: { branches: [main] }
+  workflow_dispatch:
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { submodules: recursive }
+
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: 17 }
+
+      - uses: actions/setup-go@v5
+        with: { go-version: stable }
+
+      # dnstt-client is pure Go, cross-compiled per ABI and shipped as libdnstt.so (spawned by the app).
+      - name: Build dnstt-client
+        run: |
+          mkdir -p /tmp/dnstt && cd /tmp/dnstt
+          go mod init dnsttbuild
+          go get www.bamsoftware.com/git/dnstt.git/dnstt-client@latest
+          J="$GITHUB_WORKSPACE/app/src/main/jniLibs"
+          mkdir -p $J/arm64-v8a $J/armeabi-v7a $J/x86_64
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -ldflags="-s -w" -o $J/arm64-v8a/libdnstt.so www.bamsoftware.com/git/dnstt.git/dnstt-client
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm GOARM=7 go build -ldflags="-s -w" -o $J/armeabi-v7a/libdnstt.so www.bamsoftware.com/git/dnstt.git/dnstt-client
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o $J/x86_64/libdnstt.so www.bamsoftware.com/git/dnstt.git/dnstt-client
+
+      - uses: gradle/actions/setup-gradle@v4
+        with: { gradle-version: "8.9" }
+
+      - run: gradle :app:assembleDebug --no-daemon
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gravity-debug-apk
+          path: app/build/outputs/apk/debug/*.apk
